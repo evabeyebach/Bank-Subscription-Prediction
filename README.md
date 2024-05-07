@@ -43,6 +43,7 @@ Upon analyzing the results derived from all four models, it is evident that:
 threshold.
 - The sensitivity metric is similarly outstanding, exceeding 94% for every
 model.
+
 The results of the models showed that Logistic Regression with unknown variables included yielded the highest overall accuracy. However, it was the LDA model that demonstrated the highest specificity, suggesting better performance in predicting non-subscribers.
 Key variables such as contact `method`, `month of contact`, and `previous campaign` outcomes were identified as significant predictors. The study recommends **prioritizing cellular contact** over telephone, focusing on the month of **March**, and leveraging macroeconomic indicators to target customers more effectively.
 
