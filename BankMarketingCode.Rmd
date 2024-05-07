@@ -1,0 +1,491 @@
+---
+title: "Case Study 1"
+author: "Pablo Chacon"
+date: "2024-01-30"
+output: html_document
+---
+
+```{r echo=FALSE, message=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(corrplot)
+library(car)
+library(MASS)
+```
+
+```{r}
+bank <- read.csv("~/Desktop/R_scripts/MS 4203/Case Study 1/bank-additional.csv", sep=";")
+```
+
+# Executive Summary
+
+# Problem Statement
+
+```{r}
+str(bank)
+```
+
+```{r}
+summary(bank)
+```
+
+```{r}
+colSums(is.na(bank))
+```
+
+There appear to be 0 missing values, which eliminates a lot of the data cleaning required for this model
+
+```{r}
+unknown_df <- bank == "unknown"
+colSums(unknown_df)
+```
+
+However, there are 1,230 "unknown" variables across the entire data set, which could affect the results and integrity of the data. A new dataset will be created, `bank_unk`, which will keep the unknown observations and whose results will be compared to the dataset without unknown observations
+
+```{r}
+bank_unk <- bank
+bank <- bank_unk %>% filter_all(all_vars(. != "unknown"))
+
+```
+
+Let's make sure that there are no more unknown variables:
+
+```{r}
+unknown_df <- bank == "unknown"
+colSums(unknown_df)
+```
+
+There are no more unknown observations in the bank dat-aset.
+
+# Numeric Variables & Outliers
+
+In order to analyze outliers & correlations between variables, individual analyses must be performed on the numeric variables. For this reason, a new data frame named "bank_num" will be created that only contains numeric variables in the original data-set.
+
+```{r}
+bank_num <- bank %>%
+  select_if(is.numeric)
+summary(bank_num)
+
+```
+
+The `bank_num` data frame provides a glimpse into all of the numeric variables in the bank dataset, and it will make identifying outliers and correlations between variables much easier.
+
+First, let's look at any outliers
+
+```{r}
+boxplot(bank_num[1:5])
+```
+
+The `duration` variable will not be utilized in the model per the data dictionary, so analyzing its outliers is not needed. Similarly, `pdays` has a lot of records = which means that the client has never been contacted before by a previous campaign. For this reason, its outliers will not be analyzed. Ultimately, `age`, `campaign`, and `previous` will have their outliers analyzed closely:
+
+```{r}
+boxplot(bank$age, bank$campaign, bank$previous,
+        names = c("age","campaign","previous"))
+```
+
+It appears that `age` has multiple individuals older than 70. Let's take a deeper look at this:
+
+```{r}
+over68 <- sum(bank$age >= 68)
+over68
+```
+
+With 36 individuals over 68, it would be a good idea to standardize them to 68 for the sake of the model.
+
+Let's look at `campaign`:
+
+```{r}
+boxplot(bank$campaign)
+```
+
+It appears that there are multiple outliers greater than 5, so they will be standardized to 5 for the sake of the model's accuracy.
+
+Let's now look at `previous`:
+
+```{r}
+boxplot(bank$previous)
+```
+
+Previous does not seem to have "outliers", but clients were contacted between 1-6 times. It would not make sense to alter this variable due to this.
+
+Now, let's take a look at the remaining 4 numeric variables in `bank_num`:
+
+```{r}
+boxplot(bank_num[6:9], las=2, par(cex.axis=0.6))
+```
+
+The only variable that has an outlier is the `cons.conf.indx`, which will probably not affect the results of the model substantially. For this reason, no modifications to outliers are needed for these variables.
+
+Lastly, here is `nr.employed`'s boxplot:
+
+```{r}
+boxplot(bank_num[10], show.names=TRUE, las=1)
+```
+
+This variable does not require any outlier modification either.
+
+Overall, only `age` and `campaign` require any outlier modification. As mentioned previously, any individual aged over 68 will be standardized to 68, and any campaign value > 5 will be converted to 5.
+
+```{r}
+bank$age[bank$age > 68] <- 68
+bank$campaign[bank$campaign > 5] <- 5
+```
+
+Let's take a last look at the boxplots for these modified variables:
+
+```{r}
+boxplot(bank$age, bank$campaign,
+        names=c("age", "campaign"))
+```
+No more modifications to outliers are needed! The correlation between numeric variables will be analyzed in the next section.
+
+# Visualizations
+
+After cleaning the data, it's important to gain an understanding of the data with visualizations. The goal of this is to understand the kind of data and clients that will influence the model.
+
+Before that, let's take a brief look at the `y` variable, since this is the dependent variable that will be predicted.
+```{r}
+table(bank$y)
+```
+Of the 3,090 clients surveyed, 2,720 individuals (88% of respondents) did not subscribe to a term-deposit, and 370 individuals (12% of respondents) subscribed to a term deposit. There is a stark difference in "yes" and "no", which may lead to adverse results in the model. Let's take a closer look at the respondents and their demographics.
+
+It's important to understand the kind of individuals who took part in the study, basic demographic information that may or may not influence whether or not they subscribed or didn't subscribe to the term deposit. One important variable is the level of education achieved by survey participants:
+
+```{r}
+ggplot(bank, aes(x=y)) +
+  geom_bar(aes(fill=job),position = "dodge")
+```
+
+One interesting insight from this graphic is that the majority of occupations that are both rejected and accepted for a term deposit are individuals with administrative jobs! The reason for this is unknown at the moment, but it could do with the notion that there are more people overall with administrative jobs. Interestingly, people with administrative, blue-collar, and technician jobs are the 3 highest occupations that are both accepted and denied for term deposits! Once again, this may be due to the sheer amount of people with these types of jobs, but there may be ulterior reasons as well.
+
+```{r}
+ggplot(bank, aes(x=y)) +
+  geom_bar(aes(fill=education),position = "dodge")
+```
+
+When looking at education and whether or not the client subscribed for a term deposit, it looks like university graduates were both the largest educational group that subcribed and did not subscribe, with a majority of 750+ university graduates that were recorded as "no". When looking at clients that subscribed to the term deposit ("yes"), university grads, high school grads, and professional course students were the largest subscribers based on education.
+
+It would be interesting to see what ages or age groups are more likely to be "yes" or "no" for term deposits. Based on education, university grads are the largest subscribers to term deposits, and job-wise the administrative employees are the largest subscribers. Let's analyze what the term deposit subscribers look like based on their age.
+
+Let's take a closer look at the illiterate record in education:
+```{r}
+table(bank$education)
+```
+Since there is only one illiterate individual that will skew the training and testing sets, the record should be removed:
+```{r}
+bank <- subset(bank, education != "illiterate")
+```
+
+
+First, for ease in visualizing the data, let's recode the age variable into categorical age groups. Let's take a look at the ages in this dataset:
+
+```{r}
+table(bank$age)
+```
+
+Let's split the ages into its breaks and create the new age group variable
+
+```{r}
+breaks <- c(20, 30, 40, 50, 68)  # Set breaks manually to create desired groups
+bank$age_group <- cut(bank$age, breaks = breaks, include.lowest = TRUE, right = FALSE,
+                      labels = c("20 to 29", "30 to 39", "40 to 49", "50+"))
+
+```
+
+```{r}
+table(bank$age_group)
+```
+
+Now, let's analyze what age groups are most likely to subsribe to term deposits:
+
+```{r}
+ggplot(data=bank, aes(x=y)) +
+  geom_bar(aes(fill=age_group), position="dodge")
+```
+
+It looks like the majority of term-deposit subscribers are in the 30-39 age group, followed behind by the 50+ age group. It's interesting to see that the 40-49 group is third, since they are the second largest age group in the whole data set.
+
+Now, let's take a look at the correlation of each of the numeric variables:
+
+```{r}
+corr_matrix <- cor(bank_num)
+corrplot(corr_matrix, method="circle", type="upper", order = "alphabet", tl.cex = .6)
+```
+
+It looks like there are a few notable correlations within the numeric variables: \* euribor 3 month rate (`euribor3m`) is highly correlated with number of employees (`nr.employed`) \* employment variation rate (`emp.var.rate`) is highly correlated with euribor 3 month rate (`euribor3m`) and number of employees (`nr.employed`) \* consumer price index (`cons.price.idx`) has a slighlt high correlation with both employment variation rate (`emp.var.rate`) and euribor 3 month rate (`euribor3m`) \* `previous` has a high negative correlarion with `pdays` and a slightly lower negative correlation with employment variation rate (`emp.var.rate`), euribor 3 month rate (`euribor3m`), and number of employees (`nr.employed`)
+
+It will be important to note these correlations to avoid multicollinearity in the models later on.
+
+# Conversion of categorical data to factors
+
+There are a few variables in this data-set that should be converted to factors to run the models more effectively and obtain better results
+```{r}
+bank$job<- as.factor(bank$job)
+bank$marital<- as.factor(bank$marital)
+bank$education<- as.factor(bank$education)
+bank$default<- as.factor(bank$default)
+bank$housing<- as.factor(bank$housing)
+bank$loan<- as.factor(bank$loan)
+bank$contact<- as.factor(bank$contact)
+bank$month<- as.factor(bank$month)
+bank$poutcome<- as.factor(bank$poutcome)
+bank$day_of_week<- as.factor(bank$day_of_week)
+```
+
+In the case of the `pdays` variable, which reveals the "number of days that passed by after the client was last contacted from a previous campaign", any client that was NOT previously contacted is assigned a value of 999. This could skew the model's results, and so the 999 will be converted to 0 to improve the model's results
+```{r}
+bank$pdays[bank$pdays == 999] <- 0
+```
+```{r}
+table(bank$pdays)
+```
+Much better.
+
+# Logistic Regression Model
+
+Now, it's time see whether a logistic regression model can accurately and effectively predict whether a client will subscribe ("yes") or will not subscribe ("no") to a term deposit. First, the `y` variable will be renamed and converted to a numeric factor for ease in depicting the results:
+```{r}
+bank <- bank %>% rename(term_d = y)
+bank$term_d <- ifelse(bank$term_d == "yes",1,0)
+bank$term_d <- as.factor(bank$term_d)
+```
+Subscribers of the term deposit are now 1s (formerly "yes") and non-subscribers are 0s (formerly "no")
+
+Before modeling, the data must be split into training and testing sets
+```{r}
+set.seed(100)
+row.num <- sample(1:nrow(bank), 0.7*nrow(bank))
+bank_train <- bank[row.num,]
+bank_test <- bank[-row.num,]
+```
+Now, the logistic model can be created:
+```{r}
+bank_train_glm <- glm(term_d ~ . - duration - default -age_group, family = binomial, data = bank_train)
+summary(bank_train_glm)
+```
+The model did not seem to find any highly significant variables. Let's see if multicollinearity is an issue here:
+```{r}
+vif(bank_train_glm)
+```
+Looks like `emp.var.rate`, `euribor3m`, and `nr.employed` have high VIF numbers of 11.79, 12.58, and 14.12. Let's remove `nr.employed` and see if this improves the model:
+
+```{r}
+bank_train_glm <- glm(term_d ~ . - duration -default - age_group -nr.employed, family = binomial, data = bank_train)
+summary(bank_train_glm)
+```
+That seemed to reveal a lot more significant variables. Let's check the VIF numbers again:
+```{r}
+vif(bank_train_glm)
+```
+Looks like `euribor3m` still has a high VIF of 8.00, and is non-significant with a p-value of 0.82. Let's remove it and see if that adds more significant variables:
+```{r}
+bank_train_glm <- glm(term_d ~ . - duration - default - age_group - nr.employed - euribor3m, family = binomial, data = bank_train)
+summary(bank_train_glm)
+```
+Let's check VIF again:
+```{r}
+vif(bank_train_glm)
+```
+Looks like multicollinearity is no longer an issue! Let's analyze the confusion matrix of the logistic regression model and test its accuracy:
+
+```{r}
+pred_log_train <- predict(bank_train_glm, newdata = bank_test, type="response")
+predictions_log <- ifelse(pred_log_train >= 0.5,1,0)
+base_cf <- caret::confusionMatrix(as.factor(predictions_log), as.factor(bank_test$term_d))
+base_cf
+```
+```{r echo=FALSE, include=FALSE}
+log_accuracy <- 0.8889
+log_sens <- 0.9792
+log_spec <- 0.2252
+```
+
+# Logistic Regression with Unknown Variables Included
+
+The logistic regression model above for the bank data-set omitted the 1,000+ "unknown' variables for the sake of simplicity and accuracy. However, it would be interesting to see whether these "unknowns" actually improve or worsen the model's results. For this reason, the same data type conversions and modifications will be made to the `bank_unk` data-set in order to replicate the `bank`'s conditions and run the logistic model again.
+```{r}
+bank_unk <- subset(bank_unk, loan != "unknown")
+bank_unk$job<- as.factor(bank_unk$job)
+bank_unk$marital<- as.factor(bank_unk$marital)
+bank_unk$education<- as.factor(bank_unk$education)
+bank_unk$default<- as.factor(bank_unk$default)
+bank_unk$housing<- as.factor(bank_unk$housing)
+bank_unk$loan<- as.factor(bank_unk$loan)
+bank_unk$contact<- as.factor(bank_unk$contact)
+bank_unk$month<- as.factor(bank_unk$month)
+bank_unk$poutcome<- as.factor(bank_unk$poutcome)
+bank_unk$day_of_week<- as.factor(bank_unk$day_of_week)
+```
+```{r}
+bank_unk$pdays[bank_unk$pdays == 999] <- 0
+bank_unk <- bank_unk %>% rename(term_d = y)
+bank_unk$term_d <- ifelse(bank_unk$term_d == "yes",1,0)
+bank_unk$term_d <- as.factor(bank_unk$term_d)
+```
+```{r}
+set.seed(100)
+row.num <- sample(1:nrow(bank_unk), 0.7*nrow(bank_unk))
+bank_unk_train <- bank_unk[row.num,]
+bank_unk_test <- bank_unk[-row.num,]
+```
+After that, the logistic regression model can be executed:
+```{r}
+bank_unk_train_glm <- glm(term_d ~ . - duration -default, family = binomial, data = bank_unk_train)
+summary(bank_unk_train_glm)
+```
+Let's check the VIF:
+```{r}
+vif(bank_unk_train_glm)
+```
+Looks like multicollinearity is also an issue with this model, so the same filtering of collinear variables will be performed to ensure optimal accuracy. `euribor3m` will be removed first since its p-value of 0.18 is the highest of the 3 collinear variables:
+```{r}
+bank_unk_train_glm <- glm(term_d ~ . - duration -default -euribor3m, family = binomial, data = bank_unk_train)
+summary(bank_unk_train_glm)
+```
+```{r}
+vif(bank_unk_train_glm)
+```
+Now, `nr.employed` will be removed since its p-value is the least significant:
+```{r}
+bank_unk_train_glm <- glm(term_d ~ . - duration - default -euribor3m -nr.employed, family = binomial, data = bank_unk_train)
+summary(bank_unk_train_glm)
+```
+```{r}
+vif(bank_unk_train_glm)
+```
+Since multi-collinearity is no longer an issue, the results of the model can be analyzed:
+```{r}
+pred_log_train_unk <- predict(bank_unk_train_glm, newdata = bank_unk_test, type="response")
+predictions_log_unk <- ifelse(pred_log_train_unk >= 0.5,1,0)
+unk_cf <- caret::confusionMatrix(as.factor(predictions_log_unk), as.factor(bank_unk_test$term_d))
+unk_cf
+```
+Well it looks like the results of this model are better than with the bank data-set without unknowns! Let's compare the results:
+```{r}
+base_cf
+```
+```{r}
+unk_cf
+```
+```{r echo=FALSE, include=FALSE}
+log_unk_accuracy <- 0.8996
+log_unk_sens <- 0.9775
+log_unk_spec <- 0.2920
+```
+
+Overall, these are the results from both logistic models:
+*bank data-set without unknown values:*
+Accuracy: 0.8878
+Sensitivity: 0.9779
+Specificity: 0.2252
+
+*bank_unk data-set with unknown values (excluding `loan` unknowns):*
+Accuracy: 0.8996
+Sensitivity: 0.9785
+Specificity: 0.2920
+
+Although sensitivity only increased by 0.0115 and sensitivity increased by 0.0006, specificity saw the largest increase of 0.0578. The "unknown" model predicted "no" substantially better than the base model, a welcome improvement in the results. This reveals that "unknown" records in the data-set are important to the model, and should not be excluded to provide better accuracy. ALthough the specificity is still below 0.50, this can be attibuted to the low number of term-deposit subscribers present in the data. 
+
+# LDA Model
+
+After performing the logistic regression, an LDA model will be run to see if term deposit subscribers can be clustered based on similar characteristics. Since the data was already split during the logistic regression model, the same training and testing sets will be used for the LDA model.
+```{r}
+lda.model = lda(term_d ~ .- duration -default -age_group -euribor3m -nr.employed, data= bank_train)
+predictions.lda = predict(lda.model, bank_test)
+```
+A  confusion matrix will be created to analyze the accuracy of the LDA model:
+```{r}
+lda_cf <- caret::confusionMatrix(as.factor(predictions.lda$class), as.factor(bank_test$term_d))
+lda_cf
+```
+```{r echo=FALSE, include=FALSE}
+lda_accuracy <- 0.877
+lda_sens <- 0.9461
+lda_spec <- 0.3694
+```
+
+The LDA model has the following results:
+*Overall Accuracy:* 0.877
+*Sensitivity:* 0.9461
+*Specificity:* 0.3694
+
+Let's compare these results with both logistic regression models:
+```{r}
+results_df <- data.frame(log_accuracy, log_sens, log_spec, log_unk_accuracy, log_unk_sens, log_unk_spec, lda_accuracy, lda_sens, lda_spec)
+results_df
+```
+It appears like the LDA model has the worst accuracy and sensitivity of the 3 models, although still high at 0.8792 and 0.9424, respectively. The sensitivity, however, is the highest at 0.4144. The LDA model appears to be the most accurate at correctly predicting non-term deposit subscribers ("no"). This is interesting, since the model is implying that non-term deposit subscribers have similar characteristics that allow them to be clustered into similar groups and modelled accordingly.
+
+# LDA Model with Unknown Variables
+Now, the LDA model will be run with unknown variables, just like the logistic regression model.
+```{r}
+lda.model_unk = lda(term_d ~ .- duration - default -euribor3m -nr.employed, data= bank_unk_train)
+predictions.lda_unk = predict(lda.model_unk, bank_unk_test)
+```
+Let's look at the results:
+```{r}
+lda_cf_unk <- caret::confusionMatrix(as.factor(predictions.lda_unk$class), as.factor(bank_unk_test$term_d))
+lda_cf_unk
+```
+```{r echo=FALSE, include=FALSE}
+lda_unk_accuracy <- 0.8863
+lda_unk_sens <- 0.9494
+lda_unk_spec <- 0.3942
+results_df <- results_df %>% mutate(lda_unk_accuracy = lda_unk_accuracy, lda_unk_sens = lda_unk_sens, lda_unk_spec = lda_unk_spec)
+```
+```{r}
+results_df
+```
+Looks like the unknown LDA model has an overall accuracy of 0.8855, sensitivity of 0.9485, and specificity of 0.3942.
+
+# Model Results & Findings
+
+Based on overall accuracy, here are the best performing models:
+
+Logistic Regression with unknowns: 0.8996
+Logistic Regression without unknowns: 0.8889
+LDA model with unknowns: 0.8863
+LDA model without unknowns: 0.877
+
+The Logistic Regression with unknowns performed best overall, a very interesting development. The fact that the unknown values did not decrease accuracy is very unexpected. This could be due to the fact that unknown values do make up about 925 variables, the majority coming from the `education` variable. It's possible that many of these unknown educations contributed to correct predictions.
+
+Let's compare sensitivity across the models:
+
+Logistic Regression without unknowns: 0.9792
+Logistic Regression with unknowns: 0.9775
+LDA model with unknowns: 0.9494
+LDA model without unknowns: 0.9461
+
+Interestingly, the logistic regression model *without* unknowns had the highest sensitivity, a whopping 0.9792. The fact that this model was the best at correctly predicting term-deposit subscribers is surprising since this model had the second highest accuracy. Maybe the unknown variables correctly predicted non-term deposit subscribers, which did not benefit sensitivity as expected. Also, even though the logistic regression models had sensitivity > 0.97, there is a 0.029 difference between the logistic regression model and the LDA model in sensitivity. Even though the LDAs' sensitivity hovers at 0.94, these models do not match the amazing performance of the logistic regression models.
+
+Lastly, here are the specificity results:
+
+LDA model with unknowns: 0.3942
+LDA model without unknowns: 0.3694
+Logistic Regression with unknowns: 0.292
+Logistic Regression without unknowns: 0.2252
+
+This is very surprising! The LDA model with unknowns and the LDA model without unknowns cap the specificity ranking with 0.3942 and 0.3694, respectively. This is a stark comparison from the 0.292 and 0.2252 scored by both logistic regression models! Since there is a substantially lower number of non-term deposits, it can be deduced that the LDA models performed better with the imbalanced data, considering that the LDA model with unknowns is 0.10 away from 50% specificity. 
+
+# Best predictors in each model
+
+It is very important to note what variables contributed most to the accuracy of the models. Let's take a look at both the Logistic Regression and LDA models without unknowns, since these were the base models.
+```{r}
+summary(bank_train_glm)
+```
+The variables with *** next to them imply statistical significance in the model, which are the best predictors. Let's analyze them:
+
+`contacttelephone`: clients contacted by telephone were one of the best predictors
+`monthmar`: clients contacted in the month of March were some of the best predictors
+`poutcomesuccess`: clients that successfully participated in previous marketing campaigns were some of the best predictors. This is very valuable, since it could mean that future marketing campaigns targeting "success" could result in more accurate models
+`emp.var.rate`: in terms of macroeconomic conditions, the employment variation rate is a very good predictor in the model. Further analysis is needed to determine what emp.var.rate provides the most accurate results, but this variable is of utmost importance
+`cons.price.idx`: the consumer price index is also an important macroeconimic variable to the model. It could be that depending on the month's CPI, inflation and term deposit rates may be higher, and they could be more appealing to clients. Further analysis should be performed on this variable.
+
+# Overall Conclusion & Recommendation 
+
+After analyzing the results of all 4 models, it's clear that:
+
+a. all 4 models have very high accuracy, above 87%
+b. sensitivity is also extremely high, above 94% for each model.
+
+Clearly, accuracy and sensitivity are not issues to contend with. The real issue is specificity, whether the model can correctly predict term-subscribers. Since there are fewer "yes" in the data, the models' specificity is concerning. For this reason, the best model overall is the LDA model without unknowns. This might seem like a strange choice, since it is last in both accuracy and sensitivity. However, it still obtains an 
